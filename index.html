@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+<head>
+	
+	<title>Crime à Washington DC</title>
+	
+	<link rel="shortcut icon" type="image/x-icon" href="docs/images/favicon.ico" />
+
+	<link rel="stylesheet" href="leaflet.css" />
+	<script src="leaflet.js"></script>
+	<script src='https://unpkg.com/@turf/turf@6/turf.min.js'></script>
+	<script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+
+	<style>
+		#map {
+			width: "100%";
+			height: 400px;
+		}
+	
+		.legend {
+    line-height: 18px;
+    color: #555;
+}
+         .legend i {
+    width: 18px;
+    height: 18px;
+    float: left;
+    margin-right: 8px;
+    opacity: 0.7;
+}
+	</style>
+
+</head>
+<body>
+	<div>
+	
+		<h1>Activez une couche et suivez la distribution en cliquant sur l'un des deux bouttons ci-dessous </h1>
+		<button onclick="setCrimesByWard()">Distribution des crimes par quartier par l'approche Client/Serveur</button>
+		<br><button onclick="showStreets1()">Distribution des crimes par rue par l'approche librairie Turf</button>
+		 <br>
+	
+		<h2>Vous pouvez également lire des données de la base spatiale à partir de ce formulaire:</h2>
+	
+	
+		<input id="query" type="text" value="select * from crime">
+		<button onclick="getRandomQuery()"> Submit </button>
+		
+		
+		
+		<div id='map'></div>
+		<h1>Résultat de la requete</h1>
+	<div id="res">  </div>
+			
+		</div>
+
+<script type="text/javascript" src="crime.js"></script>
+<script type="text/javascript" src="streetsData.js"></script>
+<script type="text/javascript" src="wards.js"></script>
+
+<script type="text/stylesheet" src="sheet.css"></script>
+<script type="text/javascript">
+	async function getRandomQuery(){
+		var q=document.getElementById("query").value;
+		
+		const res= await axios.get("http://localhost:3001/"+q);
+		document.getElementById("res").innerText=JSON.stringify(res.data)
+	}
+
+	
+	
+
+//initialiser la carte    
+var map = L.map('map').setView([38.91322971385432, -77.01892795972347], 12);
+
+
+var osm=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+	    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+	});
+	osm.addTo(map);
+	var legend1 = L.control({position: 'bottomright'});
+	var legend2 = L.control({position: 'bottomright'});
+	
+
+//1ère approche Turf.js
+
+// nombre de crimes par WARD ou quartier
+var crimesList=crime[0].features;
+let numberByWard=[0,0,0 ,0 ,0 ,0 ,0 ,0];
+for(var i=0;i<crimesList.length;i++){
+numberByWard[crimesList[i].properties.WARD-1]+=1;
+}
+
+
+
+
+
+// intersection de rues et coordonées de crime et nombre de crime par rue
+let crimeFeatures=crime[0].features, streetsFeatures=streetsData[0].features,wardsFeatures=wards[0].features;
+let intersection=new Array(crimeFeatures.length);
+for(var k=0;k<crimeFeatures.length;k++){
+	intersection[k]=new Array(streetsFeatures.length);
+}
+
+for(var i=0;i<crimeFeatures.length;i++){
+	for (var  j=0;j<streetsFeatures.length ;j++){
+		let lon=crimeFeatures[i].geometry.coordinates[0],lat=crimeFeatures[i].geometry.coordinates[1];
+		let crimePoint=turf.point([lon,lat]);
+		let streetLine=turf.lineString(streetsFeatures[j].geometry.coordinates);
+intersection[i][j]=turf.pointToLineDistance( crimePoint,streetLine, {units: 'miles'} )<0.01 ;
+	}
+}
+
+
+let streetsCrimes=new Array(streetsFeatures.length).fill(0)
+for (var i=0;i<crimeFeatures.length;i++){
+	for (var  j=0;j<streetsFeatures.length ;j++){
+if(intersection[i][j]==true){
+	streetsCrimes[j]+=1
+}
+}
+}
+
+function showStreets1(){
+
+map.removeControl(legend2)
+	
+function getColorStreets1(k) {
+	if( k > 3){return  '#cb181d' } else if( k > 2){return '#fb6a4a'} else if (k > 1){return '#fcae91'} else{return '#fee5d9'}}
+		
+
+
+
+function styliserStreets1(feature) {
+	console.log(getColorStreets1(streetsCrimes[feature.properties.OBJECTID-1]))
+return {
+	weight: 5,
+	opacity: 1,
+	dashArray: '3',
+	fillOpacity: 0.7,
+	color:getColorStreets1(streetsCrimes[feature.properties.OBJECTID-1]),
+	fillColor: getColorStreets1(streetsCrimes[feature.properties.OBJECTID-1])
+};
+}
+
+
+legend1.onAdd = function (map) {
+
+    var div = L.DomUtil.create('div', 'info legend'),
+        grades = [0, 1, 2, 3, 4],
+        labels = [];
+
+    // loop through our density intervals and generate a label with a colored square for each interval
+    for (var i = 0; i < grades.length; i++) {
+        div.innerHTML +=
+            '<i style="background:' + getColorStreets1(grades[i] + 1) + '"></i> ' +
+            grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] + '<br>' : '+');
+    }
+
+    return div;
+};
+
+legend1.addTo(map);	
+
+otherLayers.streets.eachLayer(function(layer){
+	layer.setStyle(styliserStreets1(layer.feature))
+})
+}
+
+
+
+//  order crimes by Report Date from the latest 
+
+const rankedByDateCrimes = crimeFeatures.sort((a, b) => (new Date(b.properties.REPORT_DAT).getTime() || -Infinity) - (new Date(a.properties.REPORT_DAT).getTime() || -Infinity));
+
+
+	baseLayer={"OSM":osm};
+	otherLayers={
+		points:L.geoJson(crime,{
+		style: {
+	weight: 5,
+	opacity: 1,
+	color:"red",
+	dashArray: '3',
+	fillOpacity: 0.7
+//	onEachFeature: onEachFeature
+	}}),
+		streets:L.geoJson(streetsData,{
+	//	style: stylisermonFeature,
+//	onEachFeature: onEachFeature
+	}),
+		wards:L.geoJson(wards,{
+	//	style: stylisermonFeature,
+	//onEachFeature: onEachFeature
+	})
+	}
+	
+	L.control.layers(baseLayer,otherLayers,{collapse:false}).addTo(map);
+	
+
+//2ème approche à partir de requetes
+
+function setCrimesByWard(){
+map.removeControl(legend1)
+axios.get("http://localhost:3001/crimes_by_wards").then(res=>{console.log(res.data);
+
+let S=res.data.sort((a, b) => a.ward - b.ward).map((x) => x.count);
+function getColorWards2(k) {
+	if( k > 149){return  '#cb181d' } else if( k > 99){return '#fb6a4a'} else if (k > 49){return '#fcae91'} else{return '#fee5d9'}}
+		
+function styliserQuartier2(feature) {
+return {
+	weight: 2,
+	opacity: 1,
+	dashArray: '3',
+	fillOpacity: 0.7,
+	fillColor: getColorWards2(parseInt(S[feature.properties.WARD]))
+};
+}
+
+
+legend2.onAdd = function (map) {
+
+    var div = L.DomUtil.create('div', 'info legend'),
+        grades = [0, 49, 99, 149, 200],
+        labels = [];
+
+    // loop through our density intervals and generate a label with a colored square for each interval
+    for (var i = 0; i < grades.length; i++) {
+        div.innerHTML +=
+            '<i style="background:' + getColorWards2(grades[i] + 1) + '"></i> ' +
+            grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] + '<br>' : '+');
+    }
+
+    return div;
+};
+
+legend2.addTo(map);	
+
+otherLayers.wards.eachLayer(function(layer){
+	layer.setStyle(styliserQuartier2(layer.feature))
+})
+
+}).catch(e=>console.log(e))
+}
+
+
+</script>
+
+</body>
+</html>
